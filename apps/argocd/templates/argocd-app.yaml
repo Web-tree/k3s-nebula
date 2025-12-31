@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: {{ .Values.argocd.namespace }}
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ .Values.argocdChart.repository }}
+    chart: {{ .Values.argocdChart.chart }}
+    targetRevision: {{ .Values.argocdChart.version }}
+    helm:
+      valueFiles:
+        - values.yaml
+  destination:
+    server: {{ .Values.destination.server }}
+    namespace: {{ .Values.argocd.namespace }}
+  # Manual sync for ArgoCD itself - prevents cascading failures during upgrades
+  syncPolicy: {}

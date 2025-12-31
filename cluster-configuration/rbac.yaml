@@ -1,0 +1,44 @@
+---
+# ClusterRoleBinding for cluster-admins group
+# Users in the "cluster-admins" group will have cluster-admin privileges
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-admins
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: cluster-admins
+---
+# ClusterRole for developers
+# Allows read-write access to most resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: developer
+rules:
+- apiGroups: [ "*" ]
+  resources: [ "*" ]
+  verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
+# Restrict access to sensitive resources
+- apiGroups: [ "" ]
+  resources: [ "secrets" ]
+  verbs: [ "get", "list", "watch" ]
+- apiGroups: [ "rbac.authorization.k8s.io" ]
+  resources: [ "clusterroles", "clusterrolebindings" ]
+  verbs: [ "get", "list", "watch" ]
+---
+# ClusterRole for viewers
+# Allows read-only access to resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: viewer
+rules:
+- apiGroups: [ "*" ]
+  resources: [ "*" ]
+  verbs: [ "get", "list", "watch" ]

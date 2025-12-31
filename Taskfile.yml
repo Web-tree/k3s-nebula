@@ -1,0 +1,294 @@
+version: '3'
+
+vars:
+  INFRASTRUCTURE_DIR: cluster-infrastructure
+  CONFIGURATION_DIR: cluster-configuration
+  SCRIPTS_DIR: scripts
+  # Set AUTO_APPROVE=true to skip confirmations: task deploy:all AUTO_APPROVE=true
+  AUTO_APPROVE_FLAG:
+    sh: 'if [ "{{.AUTO_APPROVE}}" = "true" ] || [ "{{.AUTO_APPROVE}}" = "1" ]; then echo "-auto-approve"; fi'
+
+tasks:
+  # ============================================================================
+  # Main Tasks
+  # ============================================================================
+
+  deploy:all:
+    desc: Deploy complete k3s cluster (infrastructure + configuration)
+    deps:
+    - init:infrastructure
+    - init:configuration
+    cmds:
+    - task: deploy:infrastructure
+    - task: cluster:verify
+    - task: deploy:configuration
+    - task: longhorn:install-app
+    - task: info
+
+  destroy:all:
+    desc: Destroy complete k3s cluster (configuration + infrastructure)
+    cmds:
+    - task: destroy:configuration
+    - task: destroy:infrastructure
+
+  # ============================================================================
+  # Terraform Init Tasks
+  # ============================================================================
+
+  init:infrastructure:
+    desc: Initialize infrastructure Terraform (runs only when needed)
+    dir: "{{.INFRASTRUCTURE_DIR}}"
+    sources:
+    - "*.tf"
+    - ".terraform.lock.hcl"
+    generates:
+    - ".terraform/terraform.tfstate"
+    cmds:
+    - terraform init
+
+  init:configuration:
+    desc: Initialize configuration Terraform (runs only when needed)
+    dir: "{{.CONFIGURATION_DIR}}"
+    sources:
+    - "*.tf"
+    - ".terraform.lock.hcl"
+    generates:
+    - ".terraform/terraform.tfstate"
+    cmds:
+    - terraform init
+
+  # ============================================================================
+  # Infrastructure Tasks
+  # ============================================================================
+
+  deploy:infrastructure:
+    desc: Deploy cluster infrastructure (Hetzner resources)
+    dir: "{{.INFRASTRUCTURE_DIR}}"
+    deps:
+    - init:infrastructure
+    cmds:
+    - terraform apply {{if eq .AUTO_APPROVE "true"}}-auto-approve{{end}}
+
+  destroy:infrastructure:
+    desc: Destroy cluster infrastructure
+    dir: "{{.INFRASTRUCTURE_DIR}}"
+    deps:
+    - init:infrastructure
+    cmds:
+    - terraform destroy {{if eq .AUTO_APPROVE "true"}}-auto-approve{{end}}
+
+  plan:infrastructure:
+    desc: Plan infrastructure changes
+    dir: "{{.INFRASTRUCTURE_DIR}}"
+    deps:
+    - init:infrastructure
+    cmds:
+    - terraform plan
+
+  output:infrastructure:
+    desc: Show infrastructure outputs
+    dir: "{{.INFRASTRUCTURE_DIR}}"
+    deps:
+    - init:infrastructure
+    cmds:
+    - terraform output -json | jq
+
+  # ============================================================================
+  # Configuration Tasks
+  # ============================================================================
+
+  deploy:configuration:
+    desc: Deploy cluster configuration (Kubernetes resources)
+    dir: "{{.CONFIGURATION_DIR}}"
+    deps:
+    - init:configuration
+    - user:configure
+    cmds:
+    - terraform apply {{if eq .AUTO_APPROVE "true"}}-auto-approve{{end}}
+
+  destroy:configuration:
+    desc: Destroy cluster configuration
+    dir: "{{.CONFIGURATION_DIR}}"
+    deps:
+    - init:configuration
+    cmds:
+    - terraform destroy {{if eq .AUTO_APPROVE "true"}}-auto-approve{{end}}
+
+  plan:configuration:
+    desc: Plan configuration changes
+    dir: "{{.CONFIGURATION_DIR}}"
+    deps:
+    - init:configuration
+    - user:configure
+    cmds:
+    - terraform plan
+
+  output:configuration:
+    desc: Show configuration outputs
+    dir: "{{.CONFIGURATION_DIR}}"
+    deps:
+    - init:configuration
+    cmds:
+    - terraform output -json | jq
+
+  # ============================================================================
+  # Cluster Management
+  # ============================================================================
+
+  rbac:configure:
+    desc: Configure RBAC groups (runs only when needed)
+    deps:
+    - init:infrastructure
+    cmds:
+    - echo "Configuring RBAC groups..."
+    - task: _cluster:get-admin-kubeconfig
+    - KUBECONFIG={{.INFRASTRUCTURE_DIR}}/kubeconfig.yaml kubectl apply -f {{.CONFIGURATION_DIR}}/rbac.yaml
+    - echo "✓ RBAC configuration applied."
+    - task: _cluster:cleanup-admin-kubeconfig
+    status:
+    - kubectl get clusterrolebinding cluster-admins &>/dev/null
+
+  user:configure:
+    desc: Configure user access to cluster (runs only on first deployment)
+    dir: "{{.SCRIPTS_DIR}}"
+    deps:
+    - init:infrastructure
+    - rbac:configure
+    cmds:
+    - echo "Setting up cluster access for user {{.USER}}..."
+    - task:  _cluster:get-admin-kubeconfig
+    - KUBECONFIG=../{{.INFRASTRUCTURE_DIR}}/kubeconfig.yaml TF_KUBECONFIG_PATH=../{{.INFRASTRUCTURE_DIR}}/kubeconfig.yaml ./create-user.sh {{.USER}} cluster-admins
+    - echo "✓ User '{{.USER}}' configured with admin access."
+    - task: _cluster:cleanup-admin-kubeconfig
+    vars:
+      USER:
+        sh: echo ${USER:-$(whoami)}
+    status:
+    # Skip if we already have cluster access
+    - kubectl cluster-info --context $USER-context &>/dev/null
+
+  cluster:verify:
+    desc: Verify cluster is healthy
+    deps:
+    - user:configure
+    cmds:
+    - echo "Waiting for nodes to be ready..."
+    - sleep 10
+    - kubectl get nodes
+    - kubectl get pods -A
+    - echo "Waiting for Traefik CRDs..."
+    # Wait for CRD to exist (it is created by Traefik helm chart which runs on startup)
+    - |
+      timeout 300 bash -c 'until kubectl get crd ingressroutes.traefik.containo.us &>/dev/null; do echo "Waiting for IngressRoute CRD..."; sleep 5; done'
+    # Wait for CRD to be fully established (avoid race condition where status is nil)
+    - |
+      timeout 60 bash -c 'until kubectl get crd ingressroutes.traefik.containo.us -o jsonpath="{.status.conditions}" 2>/dev/null | grep -q "type"; do echo "Waiting for IngressRoute CRD status..."; sleep 2; done'
+    - kubectl wait --for=condition=established crd/ingressroutes.traefik.containo.us --timeout=60s
+
+  cluster:validate:
+    desc: Run cluster validation script
+    dir: "{{.SCRIPTS_DIR}}"
+    deps:
+    - user:configure
+    cmds:
+    - ./validate-cluster.sh
+  
+  _cluster:get-admin-kubeconfig:
+    desc: Get admin kubeconfig
+    dir: "{{.SCRIPTS_DIR}}"
+    cmds:
+    - ./retrieve-kubeconfig.sh
+  _cluster:cleanup-admin-kubeconfig:
+    desc: Cleanup admin kubeconfig
+    cmds:
+    - rm -f {{.INFRASTRUCTURE_DIR}}/kubeconfig.yaml
+    - rm -rf {{.SCRIPTS_DIR}}/users
+    
+  test:e2e:
+    desc: Run end-to-end tests
+    dir: test
+    deps:
+    - user:configure
+    cmds:
+    - go test -v -timeout 10m ./...
+
+  argocd:validate:
+    desc: Validate ArgoCD deployment
+    dir: "{{.SCRIPTS_DIR}}"
+    deps:
+    - user:configure
+    cmds:
+    - ./validate-argocd.sh
+    
+  longhorn:install-app:
+    desc: Install ArgoCD application
+    deps:
+    - user:configure
+    cmds:
+      - pwd
+      - kubectl apply -f apps/longhorn/application.yaml
+
+  # ============================================================================
+  # Information
+  # ============================================================================
+
+  info:
+    desc: Display cluster information
+    dir: "{{.INFRASTRUCTURE_DIR}}"
+    deps:
+    - init:infrastructure
+    - init:configuration
+    - user:configure
+    cmds:
+    - |
+      echo ""
+      echo "======================================"
+      echo "Cluster Deployment Complete!"
+      echo "======================================"
+      echo ""
+      - |
+        INFRA_OUTPUTS=$(terraform output -json)
+        CONFIG_OUTPUTS=$(cd ../{{.CONFIGURATION_DIR}} && terraform output -json)
+
+        echo "Cluster endpoint: $(echo "$INFRA_OUTPUTS" | jq -r '.cluster_endpoint.value')"
+        echo "ArgoCD URL: $(echo "$CONFIG_OUTPUTS" | jq -r '.argocd_server_url.value')"
+        echo "Longhorn UI: $(echo "$CONFIG_OUTPUTS" | jq -r '.longhorn_ui_url.value')"
+      echo ""
+      echo "To access the cluster:"
+      echo "  kubectl get pods -A"
+      echo ""
+      echo "To get ArgoCD admin password:"
+      echo "  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
+      echo ""
+
+  # ============================================================================
+  # Development
+  # ============================================================================
+
+  fmt:
+    desc: Format all Terraform files
+    cmds:
+    - terraform fmt -recursive {{.INFRASTRUCTURE_DIR}}
+    - terraform fmt -recursive {{.CONFIGURATION_DIR}}
+
+  validate:
+    desc: Validate all Terraform configurations
+    deps:
+    - validate:infrastructure
+    - validate:configuration
+
+  validate:infrastructure:
+    desc: Validate infrastructure Terraform
+    dir: "{{.INFRASTRUCTURE_DIR}}"
+    deps:
+    - init:infrastructure
+    cmds:
+    - terraform validate
+
+  validate:configuration:
+    desc: Validate configuration Terraform
+    dir: "{{.CONFIGURATION_DIR}}"
+    deps:
+    - init:configuration
+    cmds:
+    - terraform validate

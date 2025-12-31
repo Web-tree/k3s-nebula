@@ -1,0 +1,24 @@
+env             = "dev"
+cluster_name    = "example-cluster"
+datacenter      = "nbg1"
+k3s_version     = "v1.28.3+k3s1"
+
+# Secrets (refer to valid SSM paths)
+hcloud_token_ssm_path = "/my-company/hetzner/token"
+ssh_public_keys       = ["ssh-ed25519 AAA..."]
+
+# Node Configuration
+nodes = {
+  "lb-1" = {
+    server_type = "cx22"
+    roles       = ["load_balancer"]
+  }
+  "cp-1" = {
+    server_type = "cx22"
+    roles       = ["control_plane", "worker"]
+  }
+  "cp-2" = {
+    server_type = "cx22"
+    roles       = ["control_plane", "worker"]
+  }
+}

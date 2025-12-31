@@ -1,0 +1,211 @@
+# Longhorn Helm Values
+# Storage system for Kubernetes persistent volumes
+# https://longhorn.io
+
+# Default storage class configuration
+persistence:
+  defaultClass: true  # Make Longhorn the default StorageClass (US1)
+  defaultClassReplicaCount: 2  # Replica count for data resilience (US2)
+  reclaimPolicy: Delete
+  migratable: false
+  recurringJobSelector:
+    enable: false
+  defaultDataLocality: disabled
+  defaultReplicaAutoBalance: disabled
+
+# Longhorn default settings
+defaultSettings:
+  # Storage configuration
+  defaultDataPath: /var/lib/longhorn  # Storage path on nodes (US1)
+  defaultReplicaCount: 2  # Default replica count for all volumes (US2)
+  replicaSoftAntiAffinity: true  # Distribute replicas across nodes (US2)
+  replicaAutoBalance: disabled
+
+  # Volume provisioning settings
+  createDefaultDiskLabeledNodes: true
+  defaultLonghornStaticStorageClass: longhorn-static
+
+  # Performance and resource settings
+  storageOverProvisioningPercentage: 200
+  storageMinimalAvailablePercentage: 25
+  upgradeChecker: true
+
+  # Backup and snapshot settings
+  backupTarget: ""
+  backupTargetCredentialSecret: ""
+  allowRecurringJobWhileVolumeDetached: false
+
+  # Networking
+  defaultDataLocality: disabled
+
+  # System management
+  priorityClass: ""
+  autoSalvage: true
+  autoDeletePodWhenVolumeDetachedUnexpectedly: true
+  disableSchedulingOnCordonedNode: true
+  replicaZoneSoftAntiAffinity: false
+  nodeDownPodDeletionPolicy: do-nothing
+  nodeDrainPolicy: block-if-contains-last-replica
+
+  # Resource limits for Longhorn components
+  guaranteedInstanceManagerCPU: 12
+  kubernetesClusterAutoscalerEnabled: false
+  orphanAutoDeletion: true
+
+# Ingress configuration for Longhorn UI (US3)
+ingress:
+  enabled: true
+  ingressClassName: traefik  # Use Traefik ingress controller
+  host: longhorn.example.com
+  path: /
+  pathType: Prefix
+
+  # TLS with Let's Encrypt via Traefik
+  tls: true
+  tlsSecret: ""  # Traefik will auto-generate via cert-manager
+
+  # Traefik annotations for TLS
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+    # Optional: Add basic auth for additional security
+    # traefik.ingress.kubernetes.io/router.middlewares: longhorn-system-auth@kubernetescrd
+
+# Service configuration
+service:
+  ui:
+    type: ClusterIP
+    nodePort: null
+  manager:
+    type: ClusterIP
+    nodePort: ""
+
+# Enable CSI Driver
+csi:
+  kubeletRootDir: ~
+  attacherReplicaCount: ~
+  provisionerReplicaCount: ~
+  resizerReplicaCount: ~
+  snapshotterReplicaCount: ~
+
+# Resource limits and requests (T034)
+longhornManager:
+  priorityClass: ~
+  tolerations: []
+  nodeSelector: {}
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+longhornDriver:
+  priorityClass: ~
+  tolerations: []
+  nodeSelector: {}
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+longhornUI:
+  priorityClass: ~
+  tolerations: []
+  nodeSelector: {}
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# Instance Manager settings
+longhornInstanceManager:
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 64Mi
+
+# Monitoring and observability labels (T036)
+annotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9500"
+  prometheus.io/path: "/metrics"
+
+# Enable volume expansion support (T035)
+enableVolumeExpansion: true
+
+# Private registry configuration (if needed)
+privateRegistry:
+  createSecret: ~
+  registryUrl: ~
+  registryUser: ~
+  registryPasswd: ~
+  registrySecret: ~
+
+# Image pull policy
+image:
+  longhorn:
+    engine:
+      repository: longhornio/longhorn-engine
+      tag: v1.8.0
+    manager:
+      repository: longhornio/longhorn-manager
+      tag: v1.8.0
+    ui:
+      repository: longhornio/longhorn-ui
+      tag: v1.8.0
+    instanceManager:
+      repository: longhornio/longhorn-instance-manager
+      tag: v1.8.0
+    shareManager:
+      repository: longhornio/longhorn-share-manager
+      tag: v1.8.0
+    backingImageManager:
+      repository: longhornio/backing-image-manager
+      tag: v1.8.0
+    supportBundleKit:
+      repository: longhornio/support-bundle-kit
+      tag: v0.0.42
+  csi:
+    attacher:
+      repository: longhornio/csi-attacher
+      tag: v4.6.1
+    provisioner:
+      repository: longhornio/csi-provisioner
+      tag: v4.0.1
+    nodeDriverRegistrar:
+      repository: longhornio/csi-node-driver-registrar
+      tag: v2.12.0
+    resizer:
+      repository: longhornio/csi-resizer
+      tag: v1.12.0
+    snapshotter:
+      repository: longhornio/csi-snapshotter
+      tag: v8.1.0
+    livenessProbe:
+      repository: longhornio/livenessprobe
+      tag: v2.14.0
+  pullPolicy: IfNotPresent
+
+# OpenShift-specific configuration
+openshift:
+  enabled: false
+  ui:
+    route:
+      enabled: false
+
+# Enable or disable preUpgradeChecker
+preUpgradeChecker:
+  jobEnabled: true
+  upgradeVersionCheck: true

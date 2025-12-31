@@ -1,0 +1,20 @@
+# ArgoCD App-of-Apps Values
+
+git:
+  repoURL: git@github.com:CHANGE_ME/argocd-apps.git # ERROR: You must configure this repository URL before using the app
+  targetRevision: main
+
+# ArgoCD settings
+argocd:
+  namespace: argocd
+  project: default
+
+# Destination cluster
+destination:
+  server: https://kubernetes.default.svc
+
+# ArgoCD Helm chart settings (for self-management)
+argocdChart:
+  repository: https://argoproj.github.io/argo-helm
+  chart: argo-cd
+  version: "9.1.3"

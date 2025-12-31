@@ -1,0 +1,141 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: longhorn
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://charts.longhorn.io
+    chart: longhorn
+    targetRevision: 1.10.1
+    helm:
+      releaseName: longhorn
+      values: |
+        # Longhorn Helm Values
+        # Storage system for Kubernetes persistent volumes
+
+        # Default storage class configuration
+        persistence:
+          defaultClass: true
+          defaultClassReplicaCount: 2
+          reclaimPolicy: Delete
+          migratable: false
+          recurringJobSelector:
+            enable: false
+          defaultDataLocality: disabled
+          defaultReplicaAutoBalance: disabled
+
+        # Longhorn default settings
+        defaultSettings:
+          defaultDataPath: /var/lib/longhorn
+          defaultReplicaCount: 2
+          replicaSoftAntiAffinity: true
+          replicaAutoBalance: disabled
+          createDefaultDiskLabeledNodes: true
+          defaultLonghornStaticStorageClass: longhorn-static
+          storageOverProvisioningPercentage: 200
+          storageMinimalAvailablePercentage: 25
+          upgradeChecker: true
+          backupTarget: ""
+          backupTargetCredentialSecret: ""
+          allowRecurringJobWhileVolumeDetached: false
+          defaultDataLocality: disabled
+          priorityClass: ""
+          autoSalvage: true
+          autoDeletePodWhenVolumeDetachedUnexpectedly: true
+          disableSchedulingOnCordonedNode: true
+          replicaZoneSoftAntiAffinity: false
+          nodeDownPodDeletionPolicy: do-nothing
+          nodeDrainPolicy: block-if-contains-last-replica
+          guaranteedInstanceManagerCPU: 12
+          kubernetesClusterAutoscalerEnabled: false
+          orphanAutoDeletion: true
+
+        # Ingress configuration for Longhorn UI
+        ingress:
+          enabled: true
+          ingressClassName: traefik
+          host: longhorn.{{ .Values.global.baseDomain }}
+          path: /
+          pathType: Prefix
+          tls: true
+          tlsSecret: ""
+          annotations:
+            traefik.ingress.kubernetes.io/router.entrypoints: websecure
+            traefik.ingress.kubernetes.io/router.tls: "true"
+            traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+
+        # Service configuration
+        service:
+          ui:
+            type: ClusterIP
+          manager:
+            type: ClusterIP
+
+        # Resource limits and requests
+        longhornManager:
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+
+        longhornDriver:
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+
+        longhornUI:
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+
+        longhornInstanceManager:
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 64Mi
+
+        # Monitoring and observability
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "9500"
+          prometheus.io/path: "/metrics"
+
+        # Enable volume expansion support
+        enableVolumeExpansion: true
+
+        # Disable pre-upgrade checker to avoid Job timeout issues
+        preUpgradeChecker:
+          jobEnabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: longhorn-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
